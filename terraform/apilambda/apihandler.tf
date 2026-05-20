@@ -5,8 +5,11 @@ resource "aws_lambda_function" "api_handler" {
   handler       = "start_order.lambda_handler"
   runtime       = "python3.11"
 
-  filename         = "${path.module}/start_order.zip"
-  source_code_hash = filebase64sha256("${path.module}/start_order.zip")
+  filename = "${path.module}/start_order.zip"
+  source_code_hash = sha256(join("", [
+    for f in sort(fileset("${path.root}/lambda_src/start_order", "**")) :
+    filesha256("${path.root}/lambda_src/start_order/${f}")
+  ]))
 
   environment {
     variables = {

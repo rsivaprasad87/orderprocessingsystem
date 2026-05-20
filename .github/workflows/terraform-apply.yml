@@ -1,0 +1,57 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-*.yml"
+
+permissions:
+  id-token: write  # required for OIDC token request
+  contents: read
+
+# Prevent concurrent applies — only one apply runs at a time
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply (dev)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.1"
+
+      - name: Build Lambda packages
+        run: |
+          for func in validate_order process_payment reserve_inventory archive_order finalize_order release_inventory; do
+            (cd "lambda_src/${func}" && zip -r "../../lambda/${func}.zip" .)
+          done
+          (cd lambda_src/start_order && zip -r ../../apilambda/start_order.zip .)
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select dev workspace
+        run: terraform workspace select dev || terraform workspace new dev
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -no-color
