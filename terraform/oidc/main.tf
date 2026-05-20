@@ -192,6 +192,7 @@ resource "aws_iam_policy" "github_actions" {
           "states:DescribeStateMachine",
           "states:UpdateStateMachine",
           "states:ListTagsForResource",
+          "states:ListStateMachineVersions",
           "states:TagResource",
           "states:UntagResource"
         ]
