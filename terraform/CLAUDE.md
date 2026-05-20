@@ -44,11 +44,18 @@ Backend: S3 bucket `order-process-state-dev-616640453658` (ap-south-1), DynamoDB
 
 ### Packaging Lambda Functions
 
-Lambda zip files must be built manually before `terraform apply`. Source code lives in `lambda_src/<function_name>/`, and the compiled zips are expected at:
-- `lambda/<function_name>.zip` — for the 6 workflow Lambdas
-- `apilambda/start_order.zip` — for the API handler Lambda
+The CI/CD pipeline rebuilds all zips automatically. For local runs, build them manually:
 
-There is no automated build script; zip each handler directory manually.
+```bash
+# Workflow lambdas
+for func in validate_order process_payment reserve_inventory archive_order finalize_order release_inventory; do
+  (cd "lambda_src/${func}" && zip -r "../../lambda/${func}.zip" .)
+done
+# API handler
+(cd lambda_src/start_order && zip -r ../../apilambda/start_order.zip .)
+```
+
+Zip files must be present before `terraform plan/apply`. Source is in `lambda_src/<function>/`, output goes to `lambda/<function>.zip` and `apilambda/start_order.zip`.
 
 ## Architecture
 
@@ -103,6 +110,33 @@ The workflow is defined inline in `stepfunctions/order_workflow.tf` as a `jsonen
 | api_handler (start_order) | `start_order.lambda_handler` | default |
 
 The 6 workflow Lambdas share a single IAM role (`lambda-execution-role`) created in the `iam` module. The API handler (`apilambda` module) has its own inline role with `states:StartExecution` permission.
+
+## CI/CD Pipeline
+
+### Overview
+
+GitHub Actions runs two workflows (`.github/workflows/`):
+- **`terraform-plan.yml`** — triggered on pull requests targeting `main`; posts the plan output as a PR comment
+- **`terraform-apply.yml`** — triggered on push/merge to `main`; runs `terraform apply -auto-approve` against the `dev` workspace
+
+Authentication uses **OIDC** (no long-lived AWS keys stored in GitHub). Both workflows assume the IAM role stored in the `AWS_ROLE_ARN` GitHub Secret.
+
+### One-time OIDC Setup (run before first pipeline use)
+
+```bash
+cd terraform/oidc
+terraform init
+terraform apply -var="github_repo=YOUR_GITHUB_USERNAME/YOUR_REPO_NAME"
+# Copy the output role ARN into GitHub → Settings → Secrets → AWS_ROLE_ARN
+```
+
+This creates the OIDC provider and a scoped IAM role in AWS. State is stored locally in `terraform/oidc/terraform.tfstate` — do not delete it.
+
+### Adding the GitHub Secret
+
+1. Go to your GitHub repo → **Settings → Secrets and variables → Actions**
+2. Click **New repository secret**
+3. Name: `AWS_ROLE_ARN`, Value: the ARN output from the OIDC setup above
 
 ### Known Typos in Filenames
 

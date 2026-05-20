@@ -1,0 +1,99 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-*.yml"
+
+permissions:
+  id-token: write       # required for OIDC token request
+  contents: read
+  pull-requests: write  # required to post plan as PR comment
+
+concurrency:
+  group: terraform-plan-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan (dev)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.1"
+
+      - name: Build Lambda packages
+        run: |
+          for func in validate_order process_payment reserve_inventory archive_order finalize_order release_inventory; do
+            (cd "lambda_src/${func}" && zip -r "../../lambda/${func}.zip" .)
+          done
+          (cd lambda_src/start_order && zip -r ../../apilambda/start_order.zip .)
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select dev workspace
+        run: terraform workspace select dev || terraform workspace new dev
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan_output.txt
+        continue-on-error: true
+
+      - name: Post plan as PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.readFileSync('terraform/plan_output.txt', 'utf8');
+            const plan = raw.length > 60000
+              ? raw.slice(0, 60000) + '\n\n⚠️ Output truncated — see workflow logs for the full plan.'
+              : raw;
+            const status = '${{ steps.plan.outcome }}' === 'success' ? '✅ Plan succeeded' : '❌ Plan failed';
+            const body = [
+              `## Terraform Plan — \`dev\` ${status}`,
+              '',
+              '<details><summary>Click to expand plan output</summary>',
+              '',
+              '```hcl',
+              plan,
+              '```',
+              '',
+              '</details>',
+              '',
+              `*Triggered by @${{ github.actor }} on \`${{ github.head_ref }}\`*`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
