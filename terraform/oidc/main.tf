@@ -76,6 +76,8 @@ resource "aws_iam_policy" "github_actions" {
         Action = [
           "s3:CreateBucket",
           "s3:DeleteBucket",
+          "s3:GetBucketLocation",
+          "s3:ListBucket",
           "s3:GetBucketVersioning",
           "s3:PutBucketVersioning",
           "s3:GetBucketPublicAccessBlock",
