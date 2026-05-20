@@ -8,7 +8,10 @@ resource "aws_lambda_function" "this" {
   filename      = each.value.filename
   timeout       = each.value.timeout
 
-  source_code_hash = filebase64sha256(each.value.filename)
+  source_code_hash = sha256(join("", [
+    for f in sort(fileset("${path.root}/lambda_src/${each.key}", "**")) :
+    filesha256("${path.root}/lambda_src/${each.key}/${f}")
+  ]))
   environment {
     variables = {
       ORDERS_TABLE   = var.orders_table_name
