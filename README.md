@@ -11,45 +11,50 @@ Infrastructure as Code (IaC).
 
 # Architecture Diagram
 
-``` text
-                           +----------------------+
-                           |   Client / Postman   |
-                           | Spring Boot / cURL   |
-                           +----------+-----------+
-                                      |
-                                      v
-                           +----------------------+
-                           |      API Gateway      |
-                           |   POST /orders API    |
-                           +----------+-----------+
-                                      |
-                                      v
-                           +----------------------+
-                           |   Lambda Function     |
-                           | Order Intake Handler  |
-                           +----------+-----------+
-                                      |
-                                      v
-                           +----------------------+
-                           |   AWS Step Functions  |
-                           | Order Workflow Engine |
-                           +-----+-----------+----+
-                                 |           |
-                     +-----------+           +------------+
-                     v                                    v
-          +----------------------+            +----------------------+
-          |   DynamoDB Table      |            | CloudWatch Logs      |
-          | Order Persistence     |            | Monitoring/Debugging |
-          +----------------------+            +----------------------+
+## System Overview
 
-Infrastructure Provisioning:
-+---------------------------------------------------------------+
-| Terraform (Local / GitHub Actions CI/CD)                     |
-|   - S3 Remote Backend (terraform.tfstate)                    |
-|   - DynamoDB State Lock                                      |
-|   - IAM Roles & Policies                                     |
-|   - API Gateway / Lambda / Step Functions / DynamoDB         |
-+---------------------------------------------------------------+
+```mermaid
+flowchart TD
+    Client(["Client\n(Postman / cURL / Spring Boot)"])
+
+    Client -->|POST /orders| APIGW["API Gateway\nHTTP API"]
+    APIGW --> Handler["Lambda\nOrder Intake Handler\n(start_order.py)"]
+    Handler -->|StartExecution| SFN["AWS Step Functions\nOrder Workflow"]
+
+    SFN --> DDB[("DynamoDB\norders-table-dev")]
+    SFN --> S3[("S3\norder-archive-dev")]
+    SFN --> CW["CloudWatch Logs"]
+
+    subgraph IaC ["Infrastructure as Code — Terraform + GitHub Actions"]
+        TF["Terraform"]
+        TF --> S3State[("S3\nRemote State")]
+        TF --> DDBLock[("DynamoDB\nState Lock")]
+    end
+```
+
+## Step Functions Workflow
+
+```mermaid
+flowchart TD
+    Start(["Start"]) --> ValidateOrder["ValidateOrder\nAWS Lambda"]
+
+    ValidateOrder -->|States.ALL| Failed
+    ValidateOrder --> CheckDuplicate{"CheckDuplicate\nChoice State"}
+
+    CheckDuplicate -->|"$.duplicate is present"| DuplicateOrder(["DuplicateOrder\nFail State"])
+    CheckDuplicate -->|Default| ProcessPayment["ProcessPayment\nAWS Lambda\nRetry ×3"]
+
+    ProcessPayment -->|Catch #1| ReleaseInventory
+    ProcessPayment --> ReserveInventory["ReserveInventory\nAWS Lambda"]
+
+    ReserveInventory -->|Catch #1| ReleaseInventory
+    ReserveInventory --> ArchiveOrder["ArchiveOrder\nAWS Lambda\nRetry ×2"]
+
+    ArchiveOrder -->|Catch #1| ReleaseInventory["ReleaseInventory\nAWS Lambda"]
+    ArchiveOrder --> FinalizeOrder["FinalizeOrder\nAWS Lambda"]
+
+    ReleaseInventory --> Failed(["Failed\nFail State"])
+    FinalizeOrder --> End(["End"])
 ```
 
 ------------------------------------------------------------------------
